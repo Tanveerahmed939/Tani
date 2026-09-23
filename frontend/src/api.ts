@@ -38,12 +38,21 @@ async function request<T = any>(path: string, options: RequestInit = {}, withAut
     },
   });
   if (!res.ok) {
-    let detail = "Request failed";
+    let detail: any = "Request failed";
     try {
       const data = await res.json();
-      detail = data.detail || detail;
+      detail = data?.detail ?? detail;
     } catch {}
-    throw new Error(detail);
+    // Pydantic validation errors come back as an array of objects. Flatten them.
+    let msg: string;
+    if (Array.isArray(detail)) {
+      msg = detail.map((d: any) => d?.msg || d?.message || JSON.stringify(d)).join(", ");
+    } else if (typeof detail === "object" && detail !== null) {
+      msg = detail.msg || detail.message || JSON.stringify(detail);
+    } else {
+      msg = String(detail);
+    }
+    throw new Error(msg);
   }
   if (res.status === 204) return undefined as any;
   return res.json();
@@ -54,6 +63,14 @@ export async function apiLogin(email: string, password: string) {
   const data = await request<{ access_token: string; user: any }>("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
+  }, false);
+  await saveToken(data.access_token);
+  return data.user;
+}
+export async function apiRegister(email: string, password: string, name: string, restaurant_name: string) {
+  const data = await request<{ access_token: string; user: any }>("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ email, password, name, restaurant_name }),
   }, false);
   await saveToken(data.access_token);
   return data.user;

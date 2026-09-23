@@ -75,6 +75,12 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=128)
 
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6, max_length=128)
+    name: str = Field(min_length=1, max_length=100)
+    restaurant_name: str = Field(min_length=1, max_length=100)
+
 class UserPublic(BaseModel):
     id: str
     email: EmailStr
@@ -149,6 +155,33 @@ class WhatsAppMessageRequest(BaseModel):
     message: str
 
 # ------------ Auth ------------
+
+@api_router.post("/auth/register", response_model=TokenResponse, status_code=201)
+async def register(body: RegisterRequest):
+    email = body.email.strip().lower()
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        raise HTTPException(409, "An account with that email already exists")
+    user_id = str(uuid.uuid4())
+    doc = {
+        "id": user_id,
+        "email": email,
+        "name": body.name.strip(),
+        "role": "owner",
+        "hashed_password": hash_password(body.password),
+        "restaurant_name": body.restaurant_name.strip(),
+        "is_active": True,
+        "created_at": iso(utcnow()),
+    }
+    await db.users.insert_one(dict(doc))
+    # Update the shared restaurant settings with this owner's restaurant name
+    await db.settings.update_one(
+        {"id": "default"},
+        {"$set": {"restaurant_name": body.restaurant_name.strip()}},
+        upsert=False,
+    )
+    pub = UserPublic(id=user_id, email=email, name=doc["name"], role=doc["role"])
+    return TokenResponse(access_token=make_token(user_id, doc["role"]), user=pub)
 
 @api_router.post("/auth/login", response_model=TokenResponse)
 async def login(body: LoginRequest):

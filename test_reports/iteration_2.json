@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration 2 focused on validating the two reported bug/feature items: (1) login error rendering (no more '[object Object]') and (2) new /signup screen backed by POST /api/auth/register. Backend: 22/22 pytest cases passed (7 new tests in test_auth_register.py + 15 existing regressions). Frontend: 8/8 Playwright checks passed against the public URL on mobile viewport (390x844). Verified: readable error for wrong password ('Invalid email or password'), readable Pydantic validation for invalid email ('value is not a valid email address...'), login → signup navigation via testID='login-goto-signup', all signup testIDs render, happy-path signup lands on dashboard with restaurant name 'Playwright Pizzeria' shown in testID='dashboard-restaurant-name', duplicate email returns 409 rendered as 'An account with that email already exists' in testID='signup-error', and invalid email at signup renders readable message. Regression: newly registered user can drive the WhatsApp bot (Hi → add → checkout → yes → receipt). No functional regressions. Pre-existing React Native deprecation warnings (TouchableWithoutFeedback, shadow* style props, props.pointerEvents) still present from iter 1 — noted below, non-blocking.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "TouchableWithoutFeedback", "issue": "Still used on login/signup screens. Deprecation warning in console. Reference: /app/frontend/app/login.tsx:47, /app/frontend/app/signup.tsx:51. Migrate to Pressable."},
+      {"component": "shadow* style props", "issue": "Deprecation warning: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' Audit StyleSheet blocks across app/(tabs)/*.tsx."},
+      {"component": "props.pointerEvents", "issue": "Deprecation warning: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Fires on dashboard tab enter — move pointerEvents JSX prop into style."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth_register.py",
+    "/app/backend/tests/test_backend_api.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "None blocking. Optional: address the three React Native deprecation warnings carried over from iter 1 (TouchableWithoutFeedback → Pressable; shadow* → boxShadow; pointerEvents JSX prop → style.pointerEvents)."
+  ],
+  "critical_code_review_comments": [
+    "api.ts request() correctly flattens Pydantic detail arrays and object errors into a readable string — verified via wrong-password (401 string) and invalid-email (422 array of {msg}) paths.",
+    "server.py POST /api/auth/register returns 201 TokenResponse, hashes password with bcrypt (truncates to 72 bytes safely), sets role='owner', and updates shared /api/settings.restaurant_name via upsert=False update (works because default settings row is seeded on startup).",
+    "Duplicate email path returns HTTP 409 with string detail (frontend renders directly).",
+    "signup.tsx has correct testIDs and client-side pre-validation (non-empty fields, password >=6) before hitting the server."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_auth_register.py (new)",
+    "/app/test_reports/iteration_2.json (new)",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated)"
+  ],
+  "success_rate": {"backend": "100% (22/22 pytest)", "frontend": "100% (8/8 Playwright steps: login wrong-pw error, login invalid-email error, goto-signup nav, signup fields present, signup invalid-email error, signup happy path -> dashboard, duplicate signup error)"},
+  "seed_data_creation": "Tests create ephemeral users with unique emails pw+<ms-timestamp>@example.com. No cleanup performed — these accounts persist in MongoDB but do not pollute the seeded owner data. Playwright run also updates the shared default settings.restaurant_name to 'Playwright Pizzeria' via the signup upsert path; this is by design per implementation (shared single-tenant settings row).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Both reported items are fixed and covered by tests. Backend regression suite lives in /app/backend/tests/ (22 tests). New signup users are stored in db.users; every register call updates the shared 'default' settings row (single-tenant), so the dashboard restaurant name will always reflect the most recent signup. Credentials: seeded owner owner@restaurant.com / owner12345; new signups use pw+<timestamp>@example.com / pizza123. Public URL: https://order-receipt-system-2.preview.emergentagent.com.",
+  "rca_of_issue": "Bug 1 RCA (confirmed already fixed): FastAPI+Pydantic v2 returns validation errors as detail=[{'msg':..., 'type':..., 'loc':...}, ...]. The previous frontend did `throw new Error(data.detail)` which stringified an array to '[object Object]'. Fix in /app/frontend/src/api.ts:47-55 now flattens arrays (join msg) and objects (msg||message||JSON.stringify). Verified: wrong-password 401 renders 'Invalid email or password'; invalid-email 422 renders 'value is not a valid email address: An email address must have an @-sign.'. Feature 2 (signup) verified end-to-end via backend register endpoint + /signup screen + AuthProvider.signup wiring."
+}

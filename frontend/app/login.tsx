@@ -6,7 +6,7 @@ import {
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, Link } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useAuth } from "@/src/auth-context";
@@ -107,6 +107,15 @@ export default function LoginScreen() {
               <Ionicons name="information-circle-outline" size={14} color={theme.color.info} />
               <Text style={styles.demoHintText}>Demo: owner@restaurant.com / owner12345</Text>
             </View>
+
+            <View style={styles.signupRow}>
+              <Text style={styles.signupText}>New restaurant?</Text>
+              <Link href="/signup" asChild>
+                <Pressable testID="login-goto-signup">
+                  <Text style={styles.signupLink}>Create an account</Text>
+                </Pressable>
+              </Link>
+            </View>
           </View>
 
           <View style={{ flex: 1 }} />
@@ -173,6 +182,9 @@ const styles = StyleSheet.create({
   errorText: { color: theme.color.error, fontSize: theme.font.size.base, flex: 1 },
   demoHint: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: theme.spacing.md },
   demoHintText: { color: theme.color.info, fontSize: theme.font.size.sm },
+  signupRow: { flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 6, marginTop: theme.spacing.lg, paddingTop: theme.spacing.md, borderTopWidth: 1, borderTopColor: theme.color.border },
+  signupText: { color: theme.color.onSurfaceTertiary, fontSize: theme.font.size.base },
+  signupLink: { color: theme.color.brand, fontSize: theme.font.size.base, fontWeight: "500" },
 
   stickyCta: { position: "absolute", left: 0, right: 0, bottom: 0, paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.md, backgroundColor: theme.color.surface, borderTopWidth: 1, borderTopColor: theme.color.border },
   submitBtn: { backgroundColor: theme.color.brand, borderRadius: theme.radius.md, paddingVertical: theme.spacing.lg, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: theme.spacing.sm },

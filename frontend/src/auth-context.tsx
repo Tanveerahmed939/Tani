@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { apiLogin, apiMe, clearToken, getToken } from "./api";
+import { apiLogin, apiMe, apiRegister, clearToken, getToken } from "./api";
 
 type User = { id: string; email: string; name: string; role: string } | null;
 
@@ -7,6 +7,7 @@ type Ctx = {
   user: User;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  signup: (email: string, password: string, name: string, restaurantName: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 };
@@ -41,13 +42,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(u);
   }, []);
 
+  const signup = useCallback(async (email: string, password: string, name: string, restaurantName: string) => {
+    const u = await apiRegister(email, password, name, restaurantName);
+    setUser(u);
+  }, []);
+
   const logout = useCallback(async () => {
     await clearToken();
     setUser(null);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, refresh }}>
+    <AuthContext.Provider value={{ user, loading, login, signup, logout, refresh }}>
       {children}
     </AuthContext.Provider>
   );
