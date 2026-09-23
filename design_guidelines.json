@@ -1,0 +1,191 @@
+{
+  "app_name": "WhatsOrder POS",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "A polished, operational tool that feels native, highly legible, and warmly inviting for hospitality management.",
+  "color": {
+    "surface": "#F9F8F6",
+    "onSurface": "#1C1B1A",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#1C1B1A",
+    "surfaceTertiary": "#EAE7E1",
+    "onSurfaceTertiary": "#4A4846",
+    "surfaceInverse": "#1C1B1A",
+    "onSurfaceInverse": "#FFFFFF",
+    "brand": "#D35400",
+    "brandPrimary": "#D35400",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#E67E22",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#FAD7A1",
+    "onBrandTertiary": "#D35400",
+    "success": "#27AE60",
+    "onSuccess": "#FFFFFF",
+    "warning": "#F39C12",
+    "onWarning": "#FFFFFF",
+    "error": "#C0392B",
+    "onError": "#FFFFFF",
+    "info": "#7F8C8D",
+    "onInfo": "#FFFFFF",
+    "border": "#EAE7E1",
+    "borderStrong": "#D5D2CC",
+    "divider": "#EAE7E1"
+  },
+  "typography": {
+    "displayFontFamily": "Plus Jakarta Sans",
+    "textFontFamily": "Plus Jakarta Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical breathing room and comfortable padding. Never cramp cards. Stick exactly to this scale.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "1",
+  "navigation": "bottom_tabs",
+  "icon_set": "Ionicons",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Apply to sticky headers when content scrolls behind them.",
+      "Apply to the bottom tab bar.",
+      "Apply to bottom-sheet handles and modal scrims."
+    ],
+    "dont's": [
+      "Do not use on regular cards, list rows, or buttons."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Owner Login",
+      "purpose": "Secure entry point for the restaurant owner.",
+      "states": {
+        "loading": "Spinner over the 'Sign In' button.",
+        "empty": "N/A",
+        "error": "Standard alert toast above the form."
+      },
+      "layout": "Hero image (abstract restaurant pattern) at the top with a vertical gradient scrim fading into surface color. Below: cleanly padded email and password inputs (labels above inputs), and a sticky full-width 'Sign In' primary CTA."
+    },
+    {
+      "name": "Dashboard",
+      "purpose": "At-a-glance operational overview showing today's sales and order metrics.",
+      "states": {
+        "loading": "Skeleton loaders for stat cards.",
+        "empty": "N/A",
+        "error": "Error loading metrics with retry button."
+      },
+      "layout": "Header with Restaurant Logo and 'Welcome back'. Top section: Horizontal FlatList of Quick Stat cards (Revenue, Total Orders, Pending). Middle section: 'Recent Alerts' (e.g., out of stock items or pending WhatsApp messages) in a 1-column list."
+    },
+    {
+      "name": "Live Orders",
+      "purpose": "Real-time feed of incoming and active WhatsApp orders.",
+      "states": {
+        "loading": "Skeleton rows mimicking order cards.",
+        "empty": "Illustration of an empty plate with 'No active orders right now.'",
+        "error": "Error boundary with Retry CTA."
+      },
+      "layout": "Sticky glass header with segmented control (Active / Past). List of order cards below. Each card shows customer avatar/initials, name, phone, item count, total price, and a Status Badge (e.g., 'Preparing' in warning color, 'Delivered' in success). Generous 12pt gap between cards."
+    },
+    {
+      "name": "Order Details",
+      "purpose": "Deep dive into a specific order to manage its preparation lifecycle and view the itemized bill.",
+      "states": {
+        "loading": "Skeleton view of the receipt.",
+        "empty": "N/A",
+        "error": "Error fetching details."
+      },
+      "layout": "Header with back button. Top section: Customer info. Middle section: Itemized receipt card on surfaceSecondary with a subtle shadow (tier 1). Bottom: Sticky Bottom Sheet exposing status transition actions (Accept -> Prepare -> Ready -> Deliver) so the owner doesn't have to scroll to update status."
+    },
+    {
+      "name": "Menu Management",
+      "purpose": "CRUD interface for toggling availability, updating prices, or adding new items.",
+      "states": {
+        "loading": "Skeleton list of menu rows.",
+        "empty": "Illustration with 'Your menu is empty. Add your first item.'",
+        "error": "Failed to load menu, retry available."
+      },
+      "layout": "List view of menu items. Each row: Leading food image (thumbnail), Title, Category, Price, and a native Switch component on the trailing edge to toggle availability. Floating Action Button (FAB) anchored bottom-right (with glass effect) to 'Add Item'."
+    },
+    {
+      "name": "WhatsApp Simulator",
+      "purpose": "Mimic the customer-facing WhatsApp conversation to test and preview the automated menu flow.",
+      "states": {
+        "loading": "Simulated typing indicator ('...').",
+        "empty": "Blank chat canvas before user says 'Hi'.",
+        "error": "Failed to send message."
+      },
+      "layout": "Chat interface. Custom header mimicking a contact (Restaurant Bot). Scrollable chat area with user messages aligned right (surfaceSecondary bubbles) and bot messages aligned left (surfaceTertiary or brandTertiary bubbles). Demonstrate an 'Interactive List Message' card showing 'View Menu' which opens a bottom sheet mimicking WhatsApp's native select-list behavior. Bottom input bar for typing simulated replies."
+    }
+  ],
+  "images": {
+    "login_hero": {
+      "url": "https://images.unsplash.com/photo-1707328835878-5492802ae561?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDZ8MHwxfHNlYXJjaHwxfHxyZXN0YXVyYW50JTIwcG9zJTIwYWJzdHJhY3QlMjBtaW5pbWFsaXN0JTIwcGF0dGVybnxlbnwwfHx8fDE3ODgyOTYyMTh8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Abstract minimalist restaurant wall pattern"
+    },
+    "restaurant_logo": {
+      "url": "https://images.unsplash.com/photo-1643069274040-ad9e126cbd35?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2ODh8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjByZXN0YXVyYW50JTIwbG9nbyUyMG1pbmltYWxpc3QlMjBncmFwaGljfGVufDB8fHx8MTc4ODI5NjIxOHww&ixlib=rb-4.1.0&q=85",
+      "alt": "Modern minimalist restaurant logo graphic"
+    },
+    "customer_avatar": {
+      "url": "https://images.unsplash.com/photo-1772371272179-3ecc656fc677?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHwxfHxzbWlsaW5nJTIwY2FzdWFsJTIwY3VzdG9tZXIlMjBwZXJzb24lMjBwb3J0cmFpdCUyMGF2YXRhcnxlbnwwfHx8fDE3ODgyOTYyMTh8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Smiling customer 3D portrait avatar"
+    },
+    "food_burger": {
+      "url": "https://images.unsplash.com/photo-1603064752734-4c48eff53d05?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTF8MHwxfHNlYXJjaHwxfHxkZWxpY2lvdXMlMjBidXJnZXIlMjBoaWdoJTIwcXVhbGl0eSUyMGlzb2xhdGVkfGVufDB8fHx8MTc4ODI5NjIyNHww&ixlib=rb-4.1.0&q=85",
+      "alt": "High quality isolated delicious burger"
+    },
+    "food_pizza": {
+      "url": "https://images.unsplash.com/photo-1593504049359-74330189a345?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzN8MHwxfHNlYXJjaHwxfHxmcmVzaCUyMHBpenphJTIwc2xpY2UlMjBjbG9zZSUyMHVwJTIwZm9vZHxlbnwwfHx8fDE3ODgyOTYyMjR8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Fresh pizza slice close up"
+    },
+    "empty_state_plate": {
+      "url": "https://images.unsplash.com/photo-1567934124115-2eca8953796b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzV8MHwxfHNlYXJjaHwxfHxlbXB0eSUyMHBsYXRlJTIwbWluaW1hbGlzdGljJTIwdGFibGUlMjBzZXR0aW5nfGVufDB8fHx8MTc4ODI5NjIyNHww&ixlib=rb-4.1.0&q=85",
+      "alt": "Empty plate minimalistic table setting"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Ensure all primary action buttons (like 'Sign In' or 'Update Order Status') are sticky above the home indicator in a fixed container. Do not rely on inline buttons at the bottom of long scrollable content.",
+    "For the WhatsApp Simulator, meticulously recreate the conversational UI layout based on Mobbin references for chat interfaces: right-aligned sender bubbles, left-aligned bot replies, and a clear 'Interactive List' block that triggers a bottom sheet when pressed.",
+    "Implement the '1 iOS-Native Clean' personality exactly. Use Plus Jakarta Sans globally, strictly at weight 400 or 500, relying on sizing for hierarchy.",
+    "Render the empty state using the provided empty plate image with an overlaying vertical gradient scrim (top-to-bottom: transparent -> dark) if text is rendered on top of it. Otherwise, display it functionally with simple text beneath it.",
+    "Strictly avoid any blues, purples, or indigos per the zero-tolerance rules. The app must rely on the warm terracotta/ochre palette and neutral greys.",
+    "Use glassmorphism (expo-glass-effect / expo-blur) on the bottom tab bar and the top sticky header when order lists scroll underneath.",
+    "Use conditional rendering using TanStack Query states (isLoading, isError, data) for Dashboard and Live Orders. Implement Skeleton placeholders during the loading states.",
+    "Include subtle haptics on status transitions (e.g. Accept -> Prepare) and when tapping the interactive WhatsApp simulator list items."
+  ],
+  "haptics": {
+    "primary_button_press": "impactLight",
+    "status_transition": "impactMedium",
+    "tab_change": "selection",
+    "toggle_switch": "impactLight",
+    "simulator_message_send": "impactLight"
+  }
+}
