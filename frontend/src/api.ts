@@ -116,6 +116,9 @@ export async function apiGetSettings() {
 export async function apiUpdateSettings(body: any) {
   return request("/api/settings", { method: "PATCH", body: JSON.stringify(body) });
 }
+export async function apiGetWhatsAppSettings() {
+  return request("/api/settings/whatsapp");
+}
 
 // ---- WhatsApp Simulator ----
 export async function apiSendWhatsappMessage(body: {

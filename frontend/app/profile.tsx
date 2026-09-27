@@ -76,6 +76,21 @@ export default function ProfileScreen() {
             </View>
           </View>
 
+          <Pressable
+            testID="profile-open-whatsapp-settings"
+            onPress={() => router.push("/whatsapp-settings")}
+            style={styles.waCard}
+          >
+            <View style={styles.waIcon}>
+              <Ionicons name="logo-whatsapp" size={22} color="#FFFFFF" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.waTitle}>WhatsApp Business integration</Text>
+              <Text style={styles.waSub}>Connect Meta Cloud API, auto-send order receipts</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={theme.color.onSurfaceTertiary} />
+          </Pressable>
+
           <Text style={styles.section}>Restaurant</Text>
           <Text style={styles.label}>Name</Text>
           <TextInput testID="profile-restaurant-name" style={styles.input} value={restaurantName} onChangeText={setRestaurantName} placeholder="Your restaurant name" placeholderTextColor={theme.color.muted} />
@@ -116,6 +131,10 @@ const styles = StyleSheet.create({
   userAvatar: { width: 52, height: 52, borderRadius: theme.radius.pill, backgroundColor: theme.color.brandTertiary, alignItems: "center", justifyContent: "center" },
   userName: { fontSize: theme.font.size.lg, fontWeight: "500", color: theme.color.onSurface },
   userEmail: { fontSize: theme.font.size.sm, color: theme.color.onSurfaceTertiary, marginTop: 2 },
+  waCard: { flexDirection: "row", alignItems: "center", gap: theme.spacing.md, backgroundColor: theme.color.surfaceSecondary, borderRadius: theme.radius.lg, padding: theme.spacing.md, borderWidth: 1, borderColor: theme.color.border, marginBottom: theme.spacing.lg },
+  waIcon: { width: 40, height: 40, borderRadius: theme.radius.pill, backgroundColor: "#25D366", alignItems: "center", justifyContent: "center" },
+  waTitle: { fontSize: theme.font.size.base, fontWeight: "500", color: theme.color.onSurface },
+  waSub: { fontSize: theme.font.size.sm, color: theme.color.onSurfaceTertiary, marginTop: 2 },
   section: { fontSize: theme.font.size.sm, fontWeight: "500", color: theme.color.onSurfaceTertiary, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: theme.spacing.sm },
   label: { fontSize: theme.font.size.base, color: theme.color.onSurface, fontWeight: "500", marginTop: theme.spacing.md, marginBottom: theme.spacing.xs },
   input: { backgroundColor: theme.color.surfaceSecondary, borderWidth: 1, borderColor: theme.color.border, borderRadius: theme.radius.md, paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.md, fontSize: theme.font.size.lg, color: theme.color.onSurface },

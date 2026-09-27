@@ -1,0 +1,52 @@
+{
+  "summary": "Iteration 3 validated the real Meta WhatsApp Cloud API integration (settings masking, auto-generated verify token, GET /api/settings/whatsapp helper, HMAC-verified webhook, and automatic customer+owner receipt dispatch after order confirmation) plus a new /whatsapp-settings mobile screen linked from Profile. Backend: 36/36 pytest cases passed (14 new WhatsApp tests + 22 existing regressions), executed against the public URL. Verified: (a) GET /api/settings never returns whatsapp_access_token or whatsapp_app_secret — only *_set booleans + *_masked strings; (b) PATCH /api/settings persists WA fields, auto-generates verify_token on first save, returns masked-only response; (c) GET /api/settings/whatsapp returns webhook_url ending in /api/whatsapp/webhook + non-empty verify_token + boolean flags; (d) GET /api/whatsapp/webhook verify honors hub.mode=subscribe with correct token (200 + plain-text challenge) and rejects wrong token (403); (e) POST /api/whatsapp/webhook rejects bad X-Hub-Signature-256 (403) and accepts correctly-signed body (200, drives bot state machine); (f) Simulator flow Hi→add→checkout→yes attaches payload.whatsapp_dispatch with customer & owner attempts — with fake creds both delivered=false (Meta 401), with whatsapp_enabled=false both delivered=false + simulator=true; no crashes in either branch. Frontend (390x844 mobile viewport): 11/11 steps passed — login → dashboard-profile-btn → profile-open-whatsapp-settings navigates to /whatsapp-settings, all 9 required testIDs render, access-token & app-secret inputs are empty with placeholder 'Leave blank to keep', current masked value shown in label, verify_token populated (32 chars), Save shows 'WhatsApp settings saved' via wa-saved, inputs re-cleared after save, wa-back returns to Profile, and the unchanged simulator flow (Hi → add → checkout → yes) still lands on the receipt bubble with the 'Order confirmed!' message. INTEGRATION FINDING: webhook_url is built from request.base_url which resolves to the INTERNAL cluster hostname over HTTP (e.g. http://order-receipt-system-2.cluster-3.preview.emergentcf.cloud/api/whatsapp/webhook) instead of the public HTTPS preview URL (https://order-receipt-system-2.preview.emergentagent.com/api/whatsapp/webhook). Meta requires HTTPS for the callback URL, so pasting the value the app currently shows into Meta will fail webhook verification. This is a real config bug for a live Meta setup even though the backend tests pass. Pre-existing React Native deprecation warnings from iter 1/2 persist (TouchableWithoutFeedback, shadow* style props, props.pointerEvents) and no new deprecated packages introduced.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/settings/whatsapp", "issue": "webhook_url is derived from FastAPI's request.base_url which behind the K8s ingress evaluates to the internal cluster hostname over HTTP (http://order-receipt-system-2.cluster-3.preview.emergentcf.cloud/api/whatsapp/webhook). The owner will copy this into Meta and Meta will reject it (Meta requires HTTPS + the public host). Suggest constructing the URL from an env var (EXPO_PUBLIC_BACKEND_URL or a new PUBLIC_BASE_URL in backend/.env) rather than request.base_url, or forcing scheme=https and stripping to the outermost X-Forwarded-Host."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "WhatsApp settings copy-to-Meta", "issue": "wa-webhook-url text shows the HTTP internal cluster host (see backend minor issue above). Owners copy-pasting this into Meta Developers Console will get a verification failure because Meta only accepts HTTPS callback URLs on public domains.", "affected_testIDs": ["wa-webhook-url", "wa-webhook-url-copy"]}
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "TouchableWithoutFeedback", "issue": "Still used on login/signup screens. Deprecation warning. Reference: /app/frontend/app/login.tsx:47, /app/frontend/app/signup.tsx:51. Migrate to Pressable."},
+      {"component": "shadow* style props", "issue": "'shadow*' style props deprecated warning; switch to boxShadow across StyleSheet blocks."},
+      {"component": "props.pointerEvents", "issue": "'props.pointerEvents is deprecated. Use style.pointerEvents' — move JSX prop into style block."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_whatsapp_integration.py",
+    "/app/backend/tests/test_auth_register.py",
+    "/app/backend/tests/test_backend_api.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix webhook_url construction in GET /api/settings/whatsapp so the value shown to the user is the PUBLIC https URL (e.g. use EXPO_PUBLIC_BACKEND_URL from an env var, or override scheme/host from X-Forwarded-* headers). Otherwise the whole live-Meta path is broken because Meta rejects http:// and internal hostnames."
+  ],
+  "critical_code_review_comments": [
+    "sanitize_settings() correctly strips raw whatsapp_access_token / whatsapp_app_secret and only emits *_masked + *_set flags. Verified end-to-end.",
+    "PATCH /api/settings auto-generates whatsapp_verify_token exactly once on first WA-field save (secrets.token_urlsafe(24) → 32-char string). Idempotent on subsequent saves. Verified.",
+    "POST /api/whatsapp/webhook signature comparison uses hmac.compare_digest against raw body BEFORE json.loads, which is correct (avoids TOCTOU on re-serialized JSON). 403 on bad signature verified.",
+    "send_whatsapp() gracefully returns {delivered:false, simulator:true} when creds missing or WA disabled, so the confirm flow never crashes when Meta rejects the fake token — confirmed by both dispatch test paths.",
+    "run_bot_for_whatsapp() persists per-customer session via wa_customer_phone key — correct choice for multi-tenant customer separation.",
+    "Wa-messages-seen collection provides idempotency against Meta redelivery — good practice.",
+    "webhook_url built via `str(request.base_url).rstrip('/')` — inside Emergent K8s this leaks the internal cluster host. Use env var instead (see action item).",
+    "SettingsUpdate model allows whatsapp_* fields; server never masks in PATCH input — correct (secrets flow one-way in)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_whatsapp_integration.py (new)",
+    "/app/test_reports/iteration_3.json (new)",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated)"
+  ],
+  "success_rate": {"backend": "100% (36/36 pytest: 14 new WA + 22 existing regressions)", "frontend": "100% (11/11 Playwright steps on mobile viewport 390x844)"},
+  "seed_data_creation": "Tests re-use the seeded owner (owner@restaurant.com/owner12345), create ephemeral WhatsApp chat sessions and one order per dispatch test. WhatsApp settings on the shared 'default' row are left with fake creds (whatsapp_enabled=true, access_token=EAA-fake-token, phone_number_id=123456789012345, app_secret=shhh, owner_whatsapp_number=+15551234567) — future tests can rely on these or overwrite them.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Full WhatsApp suite lives in /app/backend/tests/test_whatsapp_integration.py. If the main agent fixes webhook_url to return the public HTTPS URL, add an assertion `assert data['webhook_url'].startswith('https://') and 'preview.emergentagent.com' in data['webhook_url']` to TestSettingsMasking::test_verify_token_autogenerated. Meta send is mocked in the sense that we intentionally use a fake token; the backend hits real graph.facebook.com and gets 401 — that is expected behaviour and asserted. Public URL: https://order-receipt-system-2.preview.emergentagent.com. Seeded owner still: owner@restaurant.com / owner12345.",
+  "rca_of_issue": "Root cause of webhook_url pointing at the wrong host: the FastAPI app is behind the Emergent K8s ingress which does TLS termination and rewrites Host: to the internal cluster service host. FastAPI's request.base_url therefore returns http://<internal-cluster-host>/. Fix options: (1) read a hardcoded PUBLIC_BASE_URL from backend/.env; (2) honor X-Forwarded-Proto and X-Forwarded-Host explicitly (`Response(request.headers.get('x-forwarded-host', request.url.hostname))`); or (3) call app.add_middleware(ProxyHeadersMiddleware, trusted_hosts='*') from uvicorn.middleware — but simplest is option (1). Reproduction: PATCH /api/settings with any wa field then GET /api/settings/whatsapp — observe webhook_url scheme=http and host≠public preview host."
+}

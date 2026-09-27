@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Request, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -8,9 +8,14 @@ import logging
 import uuid
 import bcrypt
 import jwt
+import hmac
+import hashlib
+import secrets
+import json
+import httpx
 from pathlib import Path
 from pydantic import BaseModel, EmailStr, Field
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Any
 from datetime import datetime, timezone, timedelta
 
 ROOT_DIR = Path(__file__).parent
@@ -147,6 +152,12 @@ class SettingsUpdate(BaseModel):
     restaurant_phone: Optional[str] = None
     tax_rate: Optional[float] = None
     currency_symbol: Optional[str] = None
+    whatsapp_enabled: Optional[bool] = None
+    whatsapp_access_token: Optional[str] = None
+    whatsapp_phone_number_id: Optional[str] = None
+    whatsapp_app_secret: Optional[str] = None
+    whatsapp_verify_token: Optional[str] = None
+    owner_whatsapp_number: Optional[str] = None
 
 class WhatsAppMessageRequest(BaseModel):
     session_id: Optional[str] = None
@@ -281,22 +292,153 @@ async def dashboard_stats(user: dict = Depends(current_user)):
 
 # ------------ Settings ------------
 
+SENSITIVE_FIELDS = {"whatsapp_access_token", "whatsapp_app_secret"}
+
+def mask_secret(v: Optional[str]) -> str:
+    if not v: return ""
+    if len(v) <= 6: return "•" * len(v)
+    return v[:3] + "•" * max(3, len(v) - 6) + v[-3:]
+
+def sanitize_settings(s: dict) -> dict:
+    out = {k: v for k, v in s.items() if k != "_id"}
+    for k in SENSITIVE_FIELDS:
+        if out.get(k):
+            out[k + "_masked"] = mask_secret(out[k])
+            out[k + "_set"] = True
+        else:
+            out[k + "_set"] = False
+        out.pop(k, None)  # never return raw secret to client
+    return out
+
 @api_router.get("/settings")
 async def get_settings(user: dict = Depends(current_user)):
     s = await db.settings.find_one({"id": "default"}, {"_id": 0})
     if not s:
         raise HTTPException(404, "Settings missing")
-    return s
+    return sanitize_settings(s)
 
 @api_router.patch("/settings")
 async def update_settings(body: SettingsUpdate, user: dict = Depends(current_user)):
     updates = {k: v for k, v in body.dict().items() if v is not None}
     if not updates:
         raise HTTPException(400, "No fields to update")
-    res = await db.settings.find_one_and_update({"id": "default"}, {"$set": updates}, return_document=True, projection={"_id": 0})
+
+    # Auto-generate a strong verify_token the first time WhatsApp gets configured
+    if any(k.startswith("whatsapp_") for k in updates) or "owner_whatsapp_number" in updates:
+        current = await db.settings.find_one({"id": "default"}, {"_id": 0}) or {}
+        if not current.get("whatsapp_verify_token") and "whatsapp_verify_token" not in updates:
+            updates["whatsapp_verify_token"] = secrets.token_urlsafe(24)
+
+    res = await db.settings.find_one_and_update(
+        {"id": "default"}, {"$set": updates},
+        return_document=True, projection={"_id": 0}
+    )
     if not res:
         raise HTTPException(404, "Settings missing")
-    return res
+    return sanitize_settings(res)
+
+@api_router.get("/settings/whatsapp")
+async def get_whatsapp_settings(request: Request, user: dict = Depends(current_user)):
+    """Return the info needed to configure Meta's webhook (verify_token + URL)."""
+    s = await db.settings.find_one({"id": "default"}, {"_id": 0}) or {}
+    # Prefer explicit PUBLIC_BASE_URL from env (set to the app's public HTTPS host).
+    # Fall back to X-Forwarded-Proto/Host when the platform sets them, and finally
+    # request.base_url as a last resort (works locally but often internal in k8s).
+    base = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+    if not base:
+        proto = request.headers.get("x-forwarded-proto", "https")
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+        if host:
+            base = f"{proto}://{host}"
+        else:
+            base = str(request.base_url).rstrip("/")
+    return {
+        "webhook_url": f"{base}/api/whatsapp/webhook",
+        "verify_token": s.get("whatsapp_verify_token", ""),
+        "whatsapp_enabled": bool(s.get("whatsapp_enabled", False)),
+        "phone_number_id": s.get("whatsapp_phone_number_id", ""),
+        "owner_whatsapp_number": s.get("owner_whatsapp_number", ""),
+        "access_token_set": bool(s.get("whatsapp_access_token")),
+        "app_secret_set": bool(s.get("whatsapp_app_secret")),
+    }
+
+# ------------ Meta WhatsApp Cloud API sender ------------
+
+GRAPH_VERSION = "v25.0"
+GRAPH_BASE = "https://graph.facebook.com"
+
+def normalize_wa_number(num: str) -> str:
+    """Meta expects the international number WITHOUT '+' or spaces."""
+    if not num: return ""
+    return "".join(ch for ch in num if ch.isdigit())
+
+async def send_whatsapp(to: str, payload: dict) -> dict:
+    """Send an arbitrary WhatsApp Cloud API payload. Falls back to simulator log if creds missing."""
+    to = normalize_wa_number(to)
+    s = await db.settings.find_one({"id": "default"}, {"_id": 0}) or {}
+    token = s.get("whatsapp_access_token")
+    phone_id = s.get("whatsapp_phone_number_id")
+    enabled = s.get("whatsapp_enabled", False)
+    if not enabled or not token or not phone_id or not to:
+        logger.warning(f"[WA simulator] would send to {to}: {json.dumps(payload)[:200]}")
+        return {"delivered": False, "simulator": True}
+    url = f"{GRAPH_BASE}/{GRAPH_VERSION}/{phone_id}/messages"
+    try:
+        async with httpx.AsyncClient(timeout=15) as hc:
+            r = await hc.post(url, headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            }, json={"messaging_product": "whatsapp", "recipient_type": "individual", "to": to, **payload})
+        if r.is_error:
+            logger.error(f"[WA send FAIL {r.status_code}] {r.text[:300]}")
+            return {"delivered": False, "status": r.status_code, "error": r.text[:300]}
+        return {"delivered": True, "meta": r.json()}
+    except httpx.HTTPError as e:
+        logger.error(f"[WA HTTP error] {e}")
+        return {"delivered": False, "error": "network"}
+
+async def send_wa_text(to: str, body: str) -> dict:
+    return await send_whatsapp(to, {"type": "text", "text": {"preview_url": False, "body": body}})
+
+async def send_wa_menu_list(to: str, items: List[dict], restaurant_name: str, currency: str) -> dict:
+    rows = []
+    for it in items[:10]:  # Meta limit: 10 rows
+        rows.append({
+            "id": str(it["id"]),
+            "title": str(it["name"])[:24],
+            "description": f"{currency}{float(it['price']):.2f}"[:72],
+        })
+    return await send_whatsapp(to, {
+        "type": "interactive",
+        "interactive": {
+            "type": "list",
+            "header": {"type": "text", "text": str(restaurant_name)[:60]},
+            "body": {"text": "Tap 'View menu' to pick items."},
+            "footer": {"text": "Reply CHECKOUT to place order"},
+            "action": {
+                "button": "View menu",
+                "sections": [{"title": "Available", "rows": rows}],
+            },
+        },
+    })
+
+def render_receipt_text(order: dict, currency: str, restaurant_name: str, is_owner: bool = False) -> str:
+    lines = [f"{it['quantity']}× {it['name']} — {currency}{it['price']*it['quantity']:.2f}" for it in order["items"]]
+    head = "🧾 *New order received!*" if is_owner else "🎉 *Order confirmed!*"
+    body = (
+        f"{head}\n"
+        f"{restaurant_name}\n"
+        f"Order #{order['id'][:8].upper()}\n\n"
+        + "\n".join(lines) +
+        f"\n\nSubtotal: {currency}{order['subtotal']:.2f}"
+        f"\nTax: {currency}{order['tax']:.2f}"
+        f"\n*Total: {currency}{order['total']:.2f}*"
+    )
+    if is_owner:
+        body += f"\n\nCustomer: {order.get('customer_name','')}\nPhone: {order.get('customer_phone','')}"
+    else:
+        body += "\n\nThank you! We'll notify you when it's ready."
+    return body
 
 # ------------ WhatsApp Simulator (stateful bot) ------------
 # State machine states: idle -> greeted -> browsing -> cart_review -> awaiting_confirm -> completed
@@ -433,6 +575,10 @@ async def whatsapp_message(body: WhatsAppMessageRequest):
             ))
             session["state"] = "completed"
             session["cart"] = []
+
+            # 🔔 Auto-dispatch receipts over WhatsApp (real Meta send if configured, else logged)
+            wa_result = await auto_send_receipts(order_doc, settings)
+            replies[-1]["payload"]["whatsapp_dispatch"] = wa_result
     elif lower in {"cancel", "no"}:
         session["cart"] = []
         session["state"] = "browsing"
@@ -454,6 +600,202 @@ async def whatsapp_message(body: WhatsAppMessageRequest):
 @api_router.post("/whatsapp/reset")
 async def whatsapp_reset():
     return {"ok": True}
+
+# ------------ Auto receipt dispatch ------------
+
+async def auto_send_receipts(order_doc: dict, settings: dict) -> dict:
+    """Fire-and-report the two automatic outbound WhatsApp receipts.
+
+    - Customer receipt → order_doc.customer_phone (if any)
+    - Restaurant owner receipt → settings.owner_whatsapp_number (if any)
+    Returns a dict describing what happened for each recipient.
+    """
+    currency = settings.get("currency_symbol", "₹")
+    restaurant_name = settings.get("restaurant_name", "Restaurant")
+    customer_number = order_doc.get("customer_phone", "")
+    owner_number = settings.get("owner_whatsapp_number", "")
+
+    result = {"customer": None, "owner": None}
+    if customer_number:
+        text = render_receipt_text(order_doc, currency, restaurant_name, is_owner=False)
+        result["customer"] = await send_wa_text(customer_number, text)
+    if owner_number:
+        text = render_receipt_text(order_doc, currency, restaurant_name, is_owner=True)
+        result["owner"] = await send_wa_text(owner_number, text)
+    return result
+
+# ------------ Meta WhatsApp Webhook ------------
+
+@api_router.get("/whatsapp/webhook")
+async def whatsapp_webhook_verify(request: Request):
+    """Meta hits this once during webhook setup with hub.mode=subscribe."""
+    q = request.query_params
+    s = await db.settings.find_one({"id": "default"}, {"_id": 0}) or {}
+    expected = s.get("whatsapp_verify_token", "")
+    mode = q.get("hub.mode")
+    token = q.get("hub.verify_token", "")
+    challenge = q.get("hub.challenge", "")
+    if mode == "subscribe" and expected and hmac.compare_digest(token, expected):
+        return Response(content=challenge, media_type="text/plain")
+    raise HTTPException(status_code=403, detail="verification failed")
+
+@api_router.post("/whatsapp/webhook")
+async def whatsapp_webhook_receive(request: Request):
+    raw = await request.body()
+    s = await db.settings.find_one({"id": "default"}, {"_id": 0}) or {}
+    app_secret = s.get("whatsapp_app_secret")
+
+    # If configured, verify X-Hub-Signature-256 against the raw body
+    if app_secret:
+        supplied = request.headers.get("x-hub-signature-256", "")
+        expected = "sha256=" + hmac.new(app_secret.encode(), raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(supplied, expected):
+            raise HTTPException(status_code=403, detail="invalid signature")
+
+    try:
+        body = json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+
+    for entry in body.get("entry", []):
+        for change in entry.get("changes", []):
+            value = change.get("value", {})
+            contacts = value.get("contacts", [])
+            for msg in value.get("messages", []):
+                from_num = msg.get("from") or ""
+                contact_name = ""
+                if contacts:
+                    contact_name = (contacts[0].get("profile", {}) or {}).get("name", "")
+
+                user_text = ""
+                mtype = msg.get("type")
+                if mtype == "text":
+                    user_text = (msg.get("text", {}) or {}).get("body", "")
+                elif mtype == "interactive":
+                    inter = msg.get("interactive", {}) or {}
+                    if inter.get("type") == "list_reply":
+                        rid = (inter.get("list_reply", {}) or {}).get("id", "")
+                        user_text = f"add:{rid}" if rid else ""
+                    elif inter.get("type") == "button_reply":
+                        rid = (inter.get("button_reply", {}) or {}).get("id", "")
+                        user_text = rid or ""
+                if not user_text:
+                    continue
+
+                # Idempotency: skip if we've seen this exact message id already
+                mid = msg.get("id")
+                if mid and await db.wa_messages_seen.find_one({"id": mid}):
+                    continue
+                if mid:
+                    await db.wa_messages_seen.insert_one({"id": mid, "at": iso(utcnow())})
+
+                # Run the bot state machine for this customer
+                await run_bot_for_whatsapp(from_num, contact_name, user_text)
+
+    return {"ok": True}
+
+async def run_bot_for_whatsapp(customer_phone: str, customer_name: str, user_text: str):
+    """Bot state machine adapted to real WhatsApp: sends outbound Meta messages
+    instead of returning replies to the app."""
+    if not customer_phone:
+        return
+    settings = await db.settings.find_one({"id": "default"}, {"_id": 0}) or {"restaurant_name": "Restaurant", "tax_rate": 0.05, "currency_symbol": "₹"}
+    currency = settings.get("currency_symbol", "₹")
+    tax_rate = float(settings.get("tax_rate", 0.05))
+    restaurant_name = settings.get("restaurant_name", "Restaurant")
+
+    # Look up / create a chat session keyed by the customer's WhatsApp number
+    sess = await db.chat_sessions.find_one({"wa_customer_phone": customer_phone}, {"_id": 0})
+    if not sess:
+        sess = {
+            "id": str(uuid.uuid4()),
+            "customer_name": customer_name or "Customer",
+            "customer_phone": customer_phone,
+            "wa_customer_phone": customer_phone,
+            "state": "idle",
+            "cart": [],
+            "messages": [],
+            "created_at": iso(utcnow()),
+        }
+        await db.chat_sessions.insert_one(dict(sess))
+
+    text = (user_text or "").strip()
+    lower = text.lower()
+    state = sess["state"]
+
+    if lower in {"hi", "hello", "hey", "menu", "start"} or state == "idle":
+        await send_wa_text(customer_phone, f"👋 Welcome to *{restaurant_name}*! I'll help you place an order.")
+        items = await db.menu_items.find({"available": True}, {"_id": 0}).sort("created_at", 1).to_list(100)
+        await send_wa_menu_list(customer_phone, items, restaurant_name, currency)
+        sess["state"] = "browsing"
+
+    elif lower.startswith("add:"):
+        item_id = text.split(":", 1)[1].strip()
+        item = await db.menu_items.find_one({"id": item_id, "available": True}, {"_id": 0})
+        if not item:
+            await send_wa_text(customer_phone, "Sorry, that item isn't available.")
+        else:
+            existing = next((c for c in sess["cart"] if c["menu_item_id"] == item["id"]), None)
+            if existing:
+                existing["quantity"] += 1
+            else:
+                sess["cart"].append({"menu_item_id": item["id"], "name": item["name"], "price": float(item["price"]), "quantity": 1})
+            summary = cart_summary(sess["cart"], tax_rate, currency)
+            body = ("✅ Added *" + item["name"] + "* to your cart.\n\n" +
+                    "\n".join(summary["lines"]) +
+                    f"\n\nSubtotal: {currency}{summary['subtotal']:.2f}\nTax: {currency}{summary['tax']:.2f}\n*Total: {currency}{summary['total']:.2f}*"
+                    "\n\nReply *checkout* to place the order or MENU to add more.")
+            await send_wa_text(customer_phone, body)
+            sess["state"] = "browsing"
+
+    elif lower in {"checkout", "confirm", "yes", "place order"}:
+        if not sess["cart"]:
+            await send_wa_text(customer_phone, "Your cart is empty. Reply MENU to see what's available.")
+        elif state != "awaiting_confirm":
+            summary = cart_summary(sess["cart"], tax_rate, currency)
+            body = ("📋 *Order Summary*\n\n" +
+                    "\n".join(summary["lines"]) +
+                    f"\n\nSubtotal: {currency}{summary['subtotal']:.2f}\nTax: {currency}{summary['tax']:.2f}\n*Total: {currency}{summary['total']:.2f}*"
+                    "\n\nReply *yes* to confirm or *cancel* to abandon.")
+            await send_wa_text(customer_phone, body)
+            sess["state"] = "awaiting_confirm"
+        else:
+            summary = cart_summary(sess["cart"], tax_rate, currency)
+            order_id = str(uuid.uuid4())
+            now = iso(utcnow())
+            order_doc = {
+                "id": order_id,
+                "customer_name": sess.get("customer_name") or customer_name or "Customer",
+                "customer_phone": customer_phone,
+                "items": sess["cart"],
+                "subtotal": summary["subtotal"],
+                "tax": summary["tax"],
+                "total": summary["total"],
+                "status": "pending",
+                "source": "whatsapp",
+                "created_at": now,
+                "updated_at": now,
+            }
+            await db.orders.insert_one(dict(order_doc))
+            # 🔔 Auto-send both receipts (customer + owner) — the point of this feature
+            await auto_send_receipts(order_doc, settings)
+            sess["state"] = "completed"
+            sess["cart"] = []
+
+    elif lower in {"cancel", "no"}:
+        sess["cart"] = []
+        sess["state"] = "browsing"
+        await send_wa_text(customer_phone, "No worries, your cart has been cleared. Reply MENU to browse again.")
+    else:
+        await send_wa_text(customer_phone, "I didn't catch that. Reply MENU to see the menu, CHECKOUT to place your order, or CANCEL to reset.")
+
+    await db.chat_sessions.update_one({"id": sess["id"]}, {"$set": {
+        "customer_name": sess.get("customer_name"),
+        "customer_phone": sess.get("customer_phone"),
+        "wa_customer_phone": customer_phone,
+        "state": sess["state"],
+        "cart": sess["cart"],
+    }})
 
 @api_router.get("/health")
 async def health():
@@ -496,6 +838,12 @@ async def startup_seed():
             "restaurant_phone": os.environ["RESTAURANT_PHONE"],
             "tax_rate": 0.05,
             "currency_symbol": "₹",
+            "whatsapp_enabled": False,
+            "whatsapp_access_token": "",
+            "whatsapp_phone_number_id": "",
+            "whatsapp_app_secret": "",
+            "whatsapp_verify_token": "",
+            "owner_whatsapp_number": "",
         })
         logger.info("Seeded default settings")
 
