@@ -372,6 +372,113 @@ def normalize_wa_number(num: str) -> str:
     if not num: return ""
     return "".join(ch for ch in num if ch.isdigit())
 
+# ------------ Bilingual helpers (English / Arabic) ------------
+
+def detect_lang(text: str) -> str:
+    """Return 'ar' if the text contains Arabic characters, 'en' if it contains
+    Latin letters but no Arabic, or '' when the message carries no linguistic
+    signal (digits, emoji, punctuation, or technical tokens like 'add:<uuid>').
+
+    Callers use '' as "no evidence — keep the session's existing language"."""
+    if not text:
+        return ""
+    has_arabic = False
+    has_latin = False
+    for ch in text:
+        cp = ord(ch)
+        if (0x0600 <= cp <= 0x06FF) or (0x0750 <= cp <= 0x077F) or (0xFB50 <= cp <= 0xFDFF) or (0xFE70 <= cp <= 0xFEFF):
+            has_arabic = True
+        elif ('a' <= ch <= 'z') or ('A' <= ch <= 'Z'):
+            has_latin = True
+    if has_arabic:
+        return "ar"
+    if has_latin:
+        return "en"
+    return ""
+
+# Keyword sets — lowercase for English, raw for Arabic
+GREET_EN = {"hi", "hello", "hey", "menu", "start", "hola"}
+GREET_AR = {"مرحبا", "مرحباً", "أهلا", "أهلاً", "اهلا", "اهلاً", "السلام عليكم", "السلام", "هاي", "منيو", "المنيو", "قائمة", "القائمة", "قائمة الطعام", "ابدأ", "ابدا"}
+CHECKOUT_EN = {"checkout", "place order", "order"}
+CHECKOUT_AR = {"طلب", "اطلب", "اطلبها", "الدفع", "ادفع", "أدفع", "checkout"}
+CONFIRM_EN = {"yes", "confirm", "y"}
+CONFIRM_AR = {"نعم", "أكد", "اكد", "أوافق", "اوافق", "موافق", "تأكيد", "تاكيد", "أيوه", "ايوه"}
+CANCEL_EN = {"cancel", "no", "n"}
+CANCEL_AR = {"لا", "الغاء", "إلغاء", "الغِ", "لا شكرا", "لا شكراً"}
+
+def is_greet(lower: str, lang: str) -> bool:
+    return (lower in GREET_EN) or (lower in GREET_AR)
+
+def is_checkout(lower: str, lang: str) -> bool:
+    return (lower in CHECKOUT_EN) or (lower in CHECKOUT_AR)
+
+def is_confirm(lower: str, lang: str) -> bool:
+    return (lower in CONFIRM_EN) or (lower in CONFIRM_AR)
+
+def is_cancel(lower: str, lang: str) -> bool:
+    return (lower in CANCEL_EN) or (lower in CANCEL_AR)
+
+def t_welcome(lang: str, restaurant_name: str) -> str:
+    if lang == "ar":
+        return f"👋 أهلاً بك في *{restaurant_name}*! سأساعدك في إتمام طلبك."
+    return f"👋 Welcome to *{restaurant_name}*! I'll help you place an order."
+
+def t_menu_prompt(lang: str) -> tuple:
+    """Returns (header_text, body_text, button_text, section_title, footer_text) for the interactive list."""
+    if lang == "ar":
+        return ("قائمتنا", "اضغط على 'عرض القائمة' لاختيار الأصناف.", "عرض القائمة", "الأصناف المتوفرة", "أرسل 'طلب' لإتمام الطلب")
+    return ("Our menu", "Tap 'View menu' to pick items.", "View menu", "Available", "Reply CHECKOUT to place order")
+
+def t_item_unavailable(lang: str) -> str:
+    return "عذراً، هذا الصنف غير متاح." if lang == "ar" else "Sorry, that item isn't available."
+
+def t_cart_added(lang: str, item_name: str, summary: dict, currency: str) -> str:
+    if lang == "ar":
+        return (
+            f"✅ تم إضافة *{item_name}* إلى سلتك.\n\n"
+            + "\n".join(summary["lines"]) +
+            f"\n\nالمجموع الفرعي: {currency}{summary['subtotal']:.2f}"
+            f"\nالضريبة: {currency}{summary['tax']:.2f}"
+            f"\n*الإجمالي: {currency}{summary['total']:.2f}*"
+            "\n\nأرسل *طلب* لإتمام الطلب أو *منيو* لإضافة المزيد."
+        )
+    return (
+        f"✅ Added *{item_name}* to your cart.\n\n"
+        + "\n".join(summary["lines"]) +
+        f"\n\nSubtotal: {currency}{summary['subtotal']:.2f}"
+        f"\nTax: {currency}{summary['tax']:.2f}"
+        f"\n*Total: {currency}{summary['total']:.2f}*"
+        "\n\nReply *checkout* to place the order or MENU to add more."
+    )
+
+def t_cart_empty(lang: str) -> str:
+    return "سلتك فارغة. أرسل *منيو* لعرض الأصناف المتوفرة." if lang == "ar" else "Your cart is empty. Reply MENU to see what's available."
+
+def t_order_summary(lang: str, summary: dict, currency: str) -> str:
+    if lang == "ar":
+        return (
+            "📋 *ملخص الطلب*\n\n" +
+            "\n".join(summary["lines"]) +
+            f"\n\nالمجموع الفرعي: {currency}{summary['subtotal']:.2f}"
+            f"\nالضريبة: {currency}{summary['tax']:.2f}"
+            f"\n*الإجمالي: {currency}{summary['total']:.2f}*"
+            "\n\nأرسل *نعم* للتأكيد أو *لا* للإلغاء."
+        )
+    return (
+        "📋 *Order Summary*\n\n" +
+        "\n".join(summary["lines"]) +
+        f"\n\nSubtotal: {currency}{summary['subtotal']:.2f}"
+        f"\nTax: {currency}{summary['tax']:.2f}"
+        f"\n*Total: {currency}{summary['total']:.2f}*"
+        "\n\nReply *yes* to confirm or *cancel* to abandon."
+    )
+
+def t_cancelled(lang: str) -> str:
+    return "لا مشكلة، تم إفراغ سلتك. أرسل *منيو* لاستعراض القائمة مرة أخرى." if lang == "ar" else "No worries, your cart has been cleared. Reply MENU to browse again."
+
+def t_fallback(lang: str) -> str:
+    return "لم أفهم رسالتك. أرسل *منيو* لعرض القائمة، *طلب* لإتمام الطلب، أو *لا* لإعادة البدء." if lang == "ar" else "I didn't catch that. Reply MENU to see the menu, CHECKOUT to place your order, or CANCEL to reset."
+
 async def send_whatsapp(to: str, payload: dict) -> dict:
     """Send an arbitrary WhatsApp Cloud API payload. Falls back to simulator log if creds missing."""
     to = normalize_wa_number(to)
@@ -400,7 +507,8 @@ async def send_whatsapp(to: str, payload: dict) -> dict:
 async def send_wa_text(to: str, body: str) -> dict:
     return await send_whatsapp(to, {"type": "text", "text": {"preview_url": False, "body": body}})
 
-async def send_wa_menu_list(to: str, items: List[dict], restaurant_name: str, currency: str) -> dict:
+async def send_wa_menu_list(to: str, items: List[dict], restaurant_name: str, currency: str, lang: str = "en") -> dict:
+    header_text, body_text, button_text, section_title, footer_text = t_menu_prompt(lang)
     rows = []
     for it in items[:10]:  # Meta limit: 10 rows
         rows.append({
@@ -412,18 +520,34 @@ async def send_wa_menu_list(to: str, items: List[dict], restaurant_name: str, cu
         "type": "interactive",
         "interactive": {
             "type": "list",
-            "header": {"type": "text", "text": str(restaurant_name)[:60]},
-            "body": {"text": "Tap 'View menu' to pick items."},
-            "footer": {"text": "Reply CHECKOUT to place order"},
+            "header": {"type": "text", "text": f"{restaurant_name} — {header_text}"[:60]},
+            "body": {"text": body_text},
+            "footer": {"text": footer_text[:60]},
             "action": {
-                "button": "View menu",
-                "sections": [{"title": "Available", "rows": rows}],
+                "button": button_text[:20],
+                "sections": [{"title": section_title[:24], "rows": rows}],
             },
         },
     })
 
-def render_receipt_text(order: dict, currency: str, restaurant_name: str, is_owner: bool = False) -> str:
+def render_receipt_text(order: dict, currency: str, restaurant_name: str, is_owner: bool = False, lang: str = "en") -> str:
     lines = [f"{it['quantity']}× {it['name']} — {currency}{it['price']*it['quantity']:.2f}" for it in order["items"]]
+    if lang == "ar":
+        head = "🧾 *طلب جديد!*" if is_owner else "🎉 *تم تأكيد طلبك!*"
+        body = (
+            f"{head}\n"
+            f"{restaurant_name}\n"
+            f"رقم الطلب #{order['id'][:8].upper()}\n\n"
+            + "\n".join(lines) +
+            f"\n\nالمجموع الفرعي: {currency}{order['subtotal']:.2f}"
+            f"\nالضريبة: {currency}{order['tax']:.2f}"
+            f"\n*الإجمالي: {currency}{order['total']:.2f}*"
+        )
+        if is_owner:
+            body += f"\n\nالعميل: {order.get('customer_name','')}\nالهاتف: {order.get('customer_phone','')}"
+        else:
+            body += "\n\nشكراً لك! سنعلمك حالما يصبح الطلب جاهزاً."
+        return body
     head = "🧾 *New order received!*" if is_owner else "🎉 *Order confirmed!*"
     body = (
         f"{head}\n"
@@ -475,6 +599,7 @@ async def save_session(session: dict):
         "state": session["state"],
         "cart": session["cart"],
         "messages": session["messages"],
+        "lang": session.get("lang", "en"),
     }})
 
 def cart_summary(cart: List[dict], tax_rate: float, currency: str) -> dict:
@@ -489,10 +614,23 @@ async def whatsapp_message(body: WhatsAppMessageRequest):
     settings = await db.settings.find_one({"id": "default"}, {"_id": 0}) or {"restaurant_name": "Restaurant", "tax_rate": 0.05, "currency_symbol": "₹", "restaurant_phone": ""}
     currency = settings.get("currency_symbol", "₹")
     tax_rate = float(settings.get("tax_rate", 0.05))
+    restaurant_name = settings.get("restaurant_name", "Restaurant")
 
     session = await get_or_create_session(body.session_id, body.customer_name, body.customer_phone)
     text = body.message.strip()
     lower = text.lower()
+
+    # Detect language from the incoming message and only update the session's
+    # stored lang when the message carries a clear signal (Arabic chars OR a
+    # recognised English keyword). Technical tokens like 'add:<uuid>' should
+    # not silently reset an Arabic session back to English.
+    detected = detect_lang(text)
+    known_en = lower in GREET_EN | CHECKOUT_EN | CONFIRM_EN | CANCEL_EN
+    if detected == "ar":
+        session["lang"] = "ar"
+    elif detected == "en" and known_en:
+        session["lang"] = "en"
+    lang = session.get("lang", "en")
 
     session["messages"].append(new_user_msg(text))
 
@@ -501,24 +639,23 @@ async def whatsapp_message(body: WhatsAppMessageRequest):
 
     async def send_menu():
         items = await db.menu_items.find({"available": True}, {"_id": 0}).sort("created_at", 1).to_list(100)
-        replies.append(new_bot_msg(
-            f"Here's our menu at *{settings['restaurant_name']}* 🍽️\nTap an item to add it to your cart.",
-            {"type": "menu_list", "items": items}
-        ))
+        if lang == "ar":
+            hdr = f"إليك قائمتنا في *{restaurant_name}* 🍽️\nاضغط على أي صنف لإضافته إلى السلة."
+        else:
+            hdr = f"Here's our menu at *{restaurant_name}* 🍽️\nTap an item to add it to your cart."
+        replies.append(new_bot_msg(hdr, {"type": "menu_list", "items": items, "lang": lang}))
         session["state"] = "browsing"
 
     # Greeting triggers menu regardless of state
-    if lower in {"hi", "hello", "hey", "menu", "start"} or state == "idle":
-        replies.append(new_bot_msg(
-            f"👋 Welcome to *{settings['restaurant_name']}*! I'll help you place an order."
-        ))
+    if is_greet(lower, lang) or state == "idle":
+        replies.append(new_bot_msg(t_welcome(lang, restaurant_name)))
         await send_menu()
     elif lower.startswith("add:"):
         # format: add:<menu_item_id>
         item_id = text.split(":", 1)[1].strip()
         item = await db.menu_items.find_one({"id": item_id, "available": True}, {"_id": 0})
         if not item:
-            replies.append(new_bot_msg("Sorry, that item isn't available."))
+            replies.append(new_bot_msg(t_item_unavailable(lang)))
         else:
             existing = next((c for c in session["cart"] if c["menu_item_id"] == item["id"]), None)
             if existing:
@@ -532,59 +669,66 @@ async def whatsapp_message(body: WhatsAppMessageRequest):
                 })
             summary = cart_summary(session["cart"], tax_rate, currency)
             replies.append(new_bot_msg(
-                f"✅ Added *{item['name']}* to your cart.\n\nYour cart so far:\n" +
-                "\n".join(summary["lines"]) +
-                f"\n\nSubtotal: {currency}{summary['subtotal']:.2f}\nTax: {currency}{summary['tax']:.2f}\n*Total: {currency}{summary['total']:.2f}*\n\nReply *checkout* to place the order or tap another item to add more.",
-                {"type": "cart_update", "cart": session["cart"], **summary}
+                t_cart_added(lang, item["name"], summary, currency),
+                {"type": "cart_update", "cart": session["cart"], "lang": lang, **summary}
             ))
             session["state"] = "browsing"
-    elif lower in {"checkout", "confirm", "yes", "place order"}:
+    elif is_checkout(lower, lang) or (is_confirm(lower, lang) and state != "awaiting_confirm"):
         if not session["cart"]:
-            replies.append(new_bot_msg("Your cart is empty. Reply *menu* to see what's available."))
-        elif state != "awaiting_confirm":
+            replies.append(new_bot_msg(t_cart_empty(lang)))
+        else:
             summary = cart_summary(session["cart"], tax_rate, currency)
             replies.append(new_bot_msg(
-                "📋 *Order Summary*\n\n" +
-                "\n".join(summary["lines"]) +
-                f"\n\nSubtotal: {currency}{summary['subtotal']:.2f}\nTax: {currency}{summary['tax']:.2f}\n*Total: {currency}{summary['total']:.2f}*\n\nReply *yes* to confirm or *cancel* to abandon.",
-                {"type": "checkout", **summary}
+                t_order_summary(lang, summary, currency),
+                {"type": "checkout", "lang": lang, **summary}
             ))
             session["state"] = "awaiting_confirm"
+    elif is_confirm(lower, lang) and state == "awaiting_confirm":
+        # confirm and create order
+        summary = cart_summary(session["cart"], tax_rate, currency)
+        order_id = str(uuid.uuid4())
+        now = iso(utcnow())
+        order_doc = {
+            "id": order_id,
+            "customer_name": session["customer_name"],
+            "customer_phone": session["customer_phone"],
+            "items": session["cart"],
+            "subtotal": summary["subtotal"],
+            "tax": summary["tax"],
+            "total": summary["total"],
+            "status": "pending",
+            "source": "whatsapp",
+            "lang": lang,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await db.orders.insert_one(dict(order_doc))
+        if lang == "ar":
+            confirm_text = (
+                f"🎉 تم تأكيد طلبك! رقم الطلب *#{order_id[:8].upper()}* أُرسل إلى المطبخ.\n\n"
+                f"الإجمالي: *{currency}{summary['total']:.2f}*\n\nسنعلمك حالما يكون جاهزاً. شكراً لك! 🙏"
+            )
         else:
-            # confirm and create order
-            summary = cart_summary(session["cart"], tax_rate, currency)
-            order_id = str(uuid.uuid4())
-            now = iso(utcnow())
-            order_doc = {
-                "id": order_id,
-                "customer_name": session["customer_name"],
-                "customer_phone": session["customer_phone"],
-                "items": session["cart"],
-                "subtotal": summary["subtotal"],
-                "tax": summary["tax"],
-                "total": summary["total"],
-                "status": "pending",
-                "source": "whatsapp",
-                "created_at": now,
-                "updated_at": now,
-            }
-            await db.orders.insert_one(dict(order_doc))
-            replies.append(new_bot_msg(
-                f"🎉 Order confirmed! Your order *#{order_id[:8].upper()}* has been sent to the kitchen.\n\nTotal: *{currency}{summary['total']:.2f}*\n\nWe'll notify you once it's ready. Thank you! 🙏",
-                {"type": "receipt", "order": {**order_doc, "_id": None}, "restaurant_phone": settings.get("restaurant_phone", "")}
-            ))
-            session["state"] = "completed"
-            session["cart"] = []
+            confirm_text = (
+                f"🎉 Order confirmed! Your order *#{order_id[:8].upper()}* has been sent to the kitchen.\n\n"
+                f"Total: *{currency}{summary['total']:.2f}*\n\nWe'll notify you once it's ready. Thank you! 🙏"
+            )
+        replies.append(new_bot_msg(
+            confirm_text,
+            {"type": "receipt", "order": {**order_doc, "_id": None}, "restaurant_phone": settings.get("restaurant_phone", ""), "lang": lang}
+        ))
+        session["state"] = "completed"
+        session["cart"] = []
 
-            # 🔔 Auto-dispatch receipts over WhatsApp (real Meta send if configured, else logged)
-            wa_result = await auto_send_receipts(order_doc, settings)
-            replies[-1]["payload"]["whatsapp_dispatch"] = wa_result
-    elif lower in {"cancel", "no"}:
+        # 🔔 Auto-dispatch receipts over WhatsApp (real Meta send if configured, else logged)
+        wa_result = await auto_send_receipts(order_doc, settings, customer_lang=lang, owner_lang="en")
+        replies[-1]["payload"]["whatsapp_dispatch"] = wa_result
+    elif is_cancel(lower, lang):
         session["cart"] = []
         session["state"] = "browsing"
-        replies.append(new_bot_msg("No worries, your cart has been cleared. Reply *menu* to browse again."))
+        replies.append(new_bot_msg(t_cancelled(lang)))
     else:
-        replies.append(new_bot_msg("I didn't catch that. Reply *menu* to see the menu, *checkout* to place your order, or *cancel* to reset."))
+        replies.append(new_bot_msg(t_fallback(lang)))
 
     for r in replies:
         session["messages"].append(r)
@@ -594,6 +738,7 @@ async def whatsapp_message(body: WhatsAppMessageRequest):
         "session_id": session["id"],
         "state": session["state"],
         "cart": session["cart"],
+        "lang": session.get("lang", "en"),
         "replies": replies,
     }
 
@@ -603,11 +748,11 @@ async def whatsapp_reset():
 
 # ------------ Auto receipt dispatch ------------
 
-async def auto_send_receipts(order_doc: dict, settings: dict) -> dict:
+async def auto_send_receipts(order_doc: dict, settings: dict, customer_lang: str = "en", owner_lang: str = "en") -> dict:
     """Fire-and-report the two automatic outbound WhatsApp receipts.
 
-    - Customer receipt → order_doc.customer_phone (if any)
-    - Restaurant owner receipt → settings.owner_whatsapp_number (if any)
+    - Customer receipt → order_doc.customer_phone (if any) in customer_lang
+    - Restaurant owner receipt → settings.owner_whatsapp_number (if any) in owner_lang
     Returns a dict describing what happened for each recipient.
     """
     currency = settings.get("currency_symbol", "₹")
@@ -617,10 +762,10 @@ async def auto_send_receipts(order_doc: dict, settings: dict) -> dict:
 
     result = {"customer": None, "owner": None}
     if customer_number:
-        text = render_receipt_text(order_doc, currency, restaurant_name, is_owner=False)
+        text = render_receipt_text(order_doc, currency, restaurant_name, is_owner=False, lang=customer_lang)
         result["customer"] = await send_wa_text(customer_number, text)
     if owner_number:
-        text = render_receipt_text(order_doc, currency, restaurant_name, is_owner=True)
+        text = render_receipt_text(order_doc, currency, restaurant_name, is_owner=True, lang=owner_lang)
         result["owner"] = await send_wa_text(owner_number, text)
     return result
 
@@ -696,7 +841,8 @@ async def whatsapp_webhook_receive(request: Request):
 
 async def run_bot_for_whatsapp(customer_phone: str, customer_name: str, user_text: str):
     """Bot state machine adapted to real WhatsApp: sends outbound Meta messages
-    instead of returning replies to the app."""
+    instead of returning replies to the app. Replies match the language of the
+    incoming message (English or Arabic)."""
     if not customer_phone:
         return
     settings = await db.settings.find_one({"id": "default"}, {"_id": 0}) or {"restaurant_name": "Restaurant", "tax_rate": 0.05, "currency_symbol": "₹"}
@@ -715,6 +861,7 @@ async def run_bot_for_whatsapp(customer_phone: str, customer_name: str, user_tex
             "state": "idle",
             "cart": [],
             "messages": [],
+            "lang": "en",
             "created_at": iso(utcnow()),
         }
         await db.chat_sessions.insert_one(dict(sess))
@@ -723,17 +870,26 @@ async def run_bot_for_whatsapp(customer_phone: str, customer_name: str, user_tex
     lower = text.lower()
     state = sess["state"]
 
-    if lower in {"hi", "hello", "hey", "menu", "start"} or state == "idle":
-        await send_wa_text(customer_phone, f"👋 Welcome to *{restaurant_name}*! I'll help you place an order.")
+    # Same language-stickiness rule as the in-app simulator.
+    detected = detect_lang(text)
+    known_en = lower in GREET_EN | CHECKOUT_EN | CONFIRM_EN | CANCEL_EN
+    if detected == "ar":
+        sess["lang"] = "ar"
+    elif detected == "en" and known_en:
+        sess["lang"] = "en"
+    lang = sess.get("lang", "en")
+
+    if is_greet(lower, lang) or state == "idle":
+        await send_wa_text(customer_phone, t_welcome(lang, restaurant_name))
         items = await db.menu_items.find({"available": True}, {"_id": 0}).sort("created_at", 1).to_list(100)
-        await send_wa_menu_list(customer_phone, items, restaurant_name, currency)
+        await send_wa_menu_list(customer_phone, items, restaurant_name, currency, lang=lang)
         sess["state"] = "browsing"
 
     elif lower.startswith("add:"):
         item_id = text.split(":", 1)[1].strip()
         item = await db.menu_items.find_one({"id": item_id, "available": True}, {"_id": 0})
         if not item:
-            await send_wa_text(customer_phone, "Sorry, that item isn't available.")
+            await send_wa_text(customer_phone, t_item_unavailable(lang))
         else:
             existing = next((c for c in sess["cart"] if c["menu_item_id"] == item["id"]), None)
             if existing:
@@ -741,53 +897,50 @@ async def run_bot_for_whatsapp(customer_phone: str, customer_name: str, user_tex
             else:
                 sess["cart"].append({"menu_item_id": item["id"], "name": item["name"], "price": float(item["price"]), "quantity": 1})
             summary = cart_summary(sess["cart"], tax_rate, currency)
-            body = ("✅ Added *" + item["name"] + "* to your cart.\n\n" +
-                    "\n".join(summary["lines"]) +
-                    f"\n\nSubtotal: {currency}{summary['subtotal']:.2f}\nTax: {currency}{summary['tax']:.2f}\n*Total: {currency}{summary['total']:.2f}*"
-                    "\n\nReply *checkout* to place the order or MENU to add more.")
-            await send_wa_text(customer_phone, body)
+            await send_wa_text(customer_phone, t_cart_added(lang, item["name"], summary, currency))
             sess["state"] = "browsing"
 
-    elif lower in {"checkout", "confirm", "yes", "place order"}:
+    elif is_checkout(lower, lang):
         if not sess["cart"]:
-            await send_wa_text(customer_phone, "Your cart is empty. Reply MENU to see what's available.")
+            await send_wa_text(customer_phone, t_cart_empty(lang))
         elif state != "awaiting_confirm":
             summary = cart_summary(sess["cart"], tax_rate, currency)
-            body = ("📋 *Order Summary*\n\n" +
-                    "\n".join(summary["lines"]) +
-                    f"\n\nSubtotal: {currency}{summary['subtotal']:.2f}\nTax: {currency}{summary['tax']:.2f}\n*Total: {currency}{summary['total']:.2f}*"
-                    "\n\nReply *yes* to confirm or *cancel* to abandon.")
-            await send_wa_text(customer_phone, body)
+            await send_wa_text(customer_phone, t_order_summary(lang, summary, currency))
             sess["state"] = "awaiting_confirm"
         else:
-            summary = cart_summary(sess["cart"], tax_rate, currency)
-            order_id = str(uuid.uuid4())
-            now = iso(utcnow())
-            order_doc = {
-                "id": order_id,
-                "customer_name": sess.get("customer_name") or customer_name or "Customer",
-                "customer_phone": customer_phone,
-                "items": sess["cart"],
-                "subtotal": summary["subtotal"],
-                "tax": summary["tax"],
-                "total": summary["total"],
-                "status": "pending",
-                "source": "whatsapp",
-                "created_at": now,
-                "updated_at": now,
-            }
-            await db.orders.insert_one(dict(order_doc))
-            # 🔔 Auto-send both receipts (customer + owner) — the point of this feature
-            await auto_send_receipts(order_doc, settings)
-            sess["state"] = "completed"
-            sess["cart"] = []
+            # already awaiting_confirm and got another checkout — treat as confirm
+            pass
 
-    elif lower in {"cancel", "no"}:
+    elif is_confirm(lower, lang) and state == "awaiting_confirm":
+        summary = cart_summary(sess["cart"], tax_rate, currency)
+        order_id = str(uuid.uuid4())
+        now = iso(utcnow())
+        order_doc = {
+            "id": order_id,
+            "customer_name": sess.get("customer_name") or customer_name or "Customer",
+            "customer_phone": customer_phone,
+            "items": sess["cart"],
+            "subtotal": summary["subtotal"],
+            "tax": summary["tax"],
+            "total": summary["total"],
+            "status": "pending",
+            "source": "whatsapp",
+            "lang": lang,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await db.orders.insert_one(dict(order_doc))
+        # 🔔 Auto-send both receipts (customer in their lang, owner in English)
+        await auto_send_receipts(order_doc, settings, customer_lang=lang, owner_lang="en")
+        sess["state"] = "completed"
+        sess["cart"] = []
+
+    elif is_cancel(lower, lang):
         sess["cart"] = []
         sess["state"] = "browsing"
-        await send_wa_text(customer_phone, "No worries, your cart has been cleared. Reply MENU to browse again.")
+        await send_wa_text(customer_phone, t_cancelled(lang))
     else:
-        await send_wa_text(customer_phone, "I didn't catch that. Reply MENU to see the menu, CHECKOUT to place your order, or CANCEL to reset.")
+        await send_wa_text(customer_phone, t_fallback(lang))
 
     await db.chat_sessions.update_one({"id": sess["id"]}, {"$set": {
         "customer_name": sess.get("customer_name"),
@@ -795,6 +948,7 @@ async def run_bot_for_whatsapp(customer_phone: str, customer_name: str, user_tex
         "wa_customer_phone": customer_phone,
         "state": sess["state"],
         "cart": sess["cart"],
+        "lang": sess.get("lang", "en"),
     }})
 
 @api_router.get("/health")

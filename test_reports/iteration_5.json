@@ -1,0 +1,56 @@
+{
+  "summary": "Iteration 5 tested bilingual (English + Arabic) support for both /api/whatsapp/message and the real Meta /api/whatsapp/webhook path. Overall: 51/53 pytest passing (36 pre-existing green + 15 new bilingual passing). Restaurant name change to 'Kanoon Al Kebab' verified. English greetings ('Hi'/'menu'/'hello'/'hey') return lang='en' with 'Welcome to *' and 'Here\\'s our menu'. Arabic greetings ('مرحبا'/'منيو'/'القائمة'/'السلام عليكم'/'أهلا') return lang='ar' with 'أهلاً بك' and 'إليك قائمتنا' and NO 'Welcome to'. Full Arabic order flow reaches receipt with 'تم تأكيد طلبك', order persisted with status='pending', payload.whatsapp_dispatch contains both customer+owner. Meta webhook path: signed inbound English 'Hi' persists chat_sessions.lang='en', Arabic 'مرحبا' persists lang='ar', bad signature still 403, GET verify challenge unchanged. BUT: **language stickiness is broken** — after an Arabic greeting, sending a language-neutral message like 'add:<id>' (or any non-Arabic text) resets the session back to 'en'. Root cause: detect_lang() always returns 'en' as its default (never empty), and both /api/whatsapp/message and run_bot_for_whatsapp treat this as a positive detection and overwrite session['lang']='en'. This directly violates the review requirement 'Language stickiness: sending add:<id> should STILL reply in Arabic because the session's lang is ar'. Full Arabic order flow test also trips on this on the 'add' step. Everything else (regressions, restaurant name, webhook lang persistence on the *first* Arabic message, HMAC, receipt dispatch) is green.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/whatsapp/message + POST /api/whatsapp/webhook (run_bot_for_whatsapp)",
+        "issue": "Language stickiness broken: detect_lang() always returns 'en' as default (never empty), so the guard `if detected: session['lang']=detected` always fires and overwrites a previously-Arabic session to English the moment the customer sends any non-Arabic text (e.g. 'add:<uuid>', digits, emoji). Reproduce: POST message='مرحبا' -> lang='ar'; then POST session_id=<same>, message='add:<item_id>' -> response returns lang='en'. Reference: /app/backend/server.py lines 377-386 (detect_lang), 613-616 (whatsapp_message), 857-861 (run_bot_for_whatsapp).",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/auth/register",
+        "issue": "Register mutates the SHARED settings.restaurant_name for every account created (line 189-193). Under multi-tenant assumptions this is unexpected and causes parallel test pollution. Consider making settings per-owner or dropping the update from register()."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_bilingual.py",
+    "/app/backend/tests/test_whatsapp_integration.py",
+    "/app/backend/tests/test_backend_api.py",
+    "/app/backend/tests/test_auth_register.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix detect_lang() in /app/backend/server.py so it returns '' (empty) when no Arabic characters are found AND the text is not one of the English trigger keywords — so the caller's `if detected` guard only overwrites session lang when the language was explicitly signaled by the current message. Suggested implementation:\n```\ndef detect_lang(text: str) -> str:\n    if not text: return ''\n    for ch in text:\n        cp = ord(ch)\n        if (0x0600 <= cp <= 0x06FF) or (0x0750 <= cp <= 0x077F) or (0xFB50 <= cp <= 0xFDFF) or (0xFE70 <= cp <= 0xFEFF):\n            return 'ar'\n    lower = text.lower().strip()\n    # Only treat as an explicit English cue when it looks like an English keyword.\n    if any(w in lower for w in ('hi','hello','hey','menu','yes','no','checkout','cancel','confirm','order','start')):\n        return 'en'\n    return ''\n```\nAfter this change both TestArabicOrderFlow::test_full_arabic_order_flow and TestLangStickiness::test_add_after_arabic_greet_stays_arabic will go green.",
+    "(Optional) Make /api/auth/register stop rewriting the shared settings.restaurant_name — it causes parallel test pollution and is confusing for multi-owner scenarios."
+  ],
+  "critical_code_review_comments": [
+    "server.py line 377-386 detect_lang() has a subtle contract mismatch with its callers (whatsapp_message L613-616, run_bot_for_whatsapp L857-861): the caller code assumes a falsy return signals 'no language detected' and preserves the session's remembered lang, but the function never returns falsy for non-empty text.",
+    "server.py L189-193: /api/auth/register updates the shared default settings row's restaurant_name. This is fine for the current single-tenant seed use-case but conflicts with the assumption that settings are stable across owners.",
+    "test_backend_api.py::TestWhatsappFlow::test_full_order_flow returns a value (line 169) which pytest warns about; this is pre-existing.",
+    "The webhook path (run_bot_for_whatsapp) has the same stickiness bug — customer's language will flip to English on any add:<id> or numeric response, so subsequent bot messages (checkout summary, receipt) will be sent in the wrong language."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_bilingual.py (new — 17 tests covering EN/AR simulator paths, full AR order flow, stickiness, webhook lang persistence, HMAC, verify challenge)",
+    "/app/test_reports/iteration_5.json (new)",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated)"
+  ],
+  "success_rate": {
+    "backend": "96% (51/53 pytest). 2 failures both stem from the single language-stickiness bug in detect_lang().",
+    "frontend": "not tested this iteration (backend-only per request)"
+  },
+  "seed_data_creation": "Reused seeded owner (owner@restaurant.com / owner12345). Settings row still has fake WA creds from iter 3/4 (whatsapp_enabled=true, access_token=EAA-fake-token-1234567890, phone_number_id=123456789012345, app_secret='shhh', owner_whatsapp_number=+15551234567). Restaurant name reset to 'Kanoon Al Kebab' by TestRestaurantName at start of the bilingual module. Two chat_sessions docs (wa_customer_phone=15559990001 with lang='en', wa_customer_phone=15559990002 with lang='ar') are created by the webhook tests.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "After the main agent fixes detect_lang() so it returns '' for non-Arabic non-English-keyword text, re-run `pytest /app/backend/tests/` — expect 53/53 green. The two currently-failing tests are TestArabicOrderFlow::test_full_arabic_order_flow (fails at the 'add:<id>' step) and TestLangStickiness::test_add_after_arabic_greet_stays_arabic. All other bilingual assertions (English welcome, Arabic welcome, Arabic checkout summary text, Arabic receipt, whatsapp_dispatch, webhook English/Arabic language persistence to chat_sessions, HMAC 403, verify challenge, restaurant name = 'Kanoon Al Kebab') are already passing. If detect_lang is fixed, no other code changes are needed — the caller code (whatsapp_message, run_bot_for_whatsapp) already handles the empty-string return correctly.",
+  "rca_of_issue": "RCA — Language stickiness bug:\n1. Reproduction:\n   a. POST /api/whatsapp/message {message: 'مرحبا', customer_phone:'+15550000401'} → response.lang='ar', session lang persisted='ar' ✅\n   b. POST /api/whatsapp/message {session_id:<sid>, message:'add:<item_uuid>'} → response.lang='en' ❌ (spec says it should stay 'ar')\n2. Trace:\n   - detect_lang('add:abc-123') iterates every char, finds no Arabic codepoint, falls through to `return 'en'` (line 386).\n   - whatsapp_message line 614: `lang = detected if detected else session.get('lang','en')`. Since detected='en' (truthy), lang='en'.\n   - line 615-616: `if detected: session['lang'] = detected` → overwrites stored 'ar' with 'en'.\n   - Same pattern at line 857-861 in run_bot_for_whatsapp — so the webhook path has the identical bug.\n3. Mitigation: change detect_lang() to return '' when no Arabic AND text is not an English trigger keyword. Full snippet in action_items[0]. The caller code needs zero changes because the `if detected` guard already gates the overwrite.\n4. Blast radius: any customer who starts a conversation in Arabic will silently be flipped to English messages the moment they tap a menu item (add:<id> comes from Meta's list_reply → run_bot_for_whatsapp path) or type digits/emoji. So the entire real-Meta Arabic flow will send the checkout summary and receipt in the wrong language. High-severity for Arabic customers."
+}

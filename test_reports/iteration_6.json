@@ -1,0 +1,48 @@
+{
+  "summary": "Re-verification of iteration 5 language-stickiness bug fix. detect_lang() was rewritten to return 'ar' when the message contains any Arabic-block codepoint, 'en' when it contains Latin letters only, and '' when the message has no linguistic signal (digits, emoji, technical tokens like 'add:<uuid>'). Both callers — POST /api/whatsapp/message (lines 627-632) and run_bot_for_whatsapp for the Meta webhook path (lines 874-879) — now only overwrite session['lang'] when detected=='ar' OR (detected=='en' AND the message is one of GREET_EN|CHECKOUT_EN|CONFIRM_EN|CANCEL_EN). Otherwise the previously-stored session lang is preserved. Ran the full backend pytest suite (2 parallel workers): **53/53 PASSED in 8.59s** — including the two previously-failing tests TestArabicOrderFlow::test_full_arabic_order_flow (full مرحبا → add:<id> → طلب → نعم flow stays Arabic all the way to 'تم تأكيد طلبك' with payload.type='receipt' and payload.whatsapp_dispatch present) and TestLangStickiness::test_add_after_arabic_greet_stays_arabic. English stickiness (TestEnglishOrderFlow::test_full_english_order_flow) is also green — 'Hi' → 'add:<id>' returns 'Added' (English) not 'تم إضافة' (Arabic). All 36 pre-existing regression tests remain green, all 15 bilingual/webhook tests from iteration 5 remain green.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/auth/register",
+        "issue": "Pre-existing (not part of this fix): register mutates the shared settings.restaurant_name for every account created. Under multi-tenant assumptions this is unexpected. Left as-is because the review request scoped only to the language fix."
+      },
+      {
+        "endpoint": "N/A (pytest warning)",
+        "issue": "Pre-existing: test_backend_api.py::TestWhatsappFlow::test_full_order_flow returns a value (str) instead of using assert. Not a functional issue — pytest PytestReturnNotNoneWarning only."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_bilingual.py",
+    "/app/backend/tests/test_whatsapp_integration.py",
+    "/app/backend/tests/test_backend_api.py",
+    "/app/backend/tests/test_auth_register.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py L377-397 detect_lang(): correctly implemented with ternary return contract ('ar' / 'en' / ''). Callers at L627-633 and L874-880 correctly guard the session-lang overwrite via `if detected == 'ar'` and `elif detected == 'en' and known_en`.",
+    "Both /api/whatsapp/message and run_bot_for_whatsapp share the same ~7-line detect-and-update block (L627-633 vs L874-880). Not a bug, but consider extracting into a helper `update_session_lang(session, text) -> str` to keep the two code paths from drifting in future changes."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_6.json (new)",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated — 53/53 PASSED)"
+  ],
+  "success_rate": {
+    "backend": "100% (53/53 pytest passed)",
+    "frontend": "not tested this iteration (backend-only per request)"
+  },
+  "seed_data_creation": "No new seed data created for this iteration. Reused seeded owner (owner@restaurant.com / owner12345). Settings row still has iteration-3/4 fake WA creds (whatsapp_enabled=true, access_token=EAA-fake-token-1234567890, phone_number_id=123456789012345, app_secret='shhh', owner_whatsapp_number=+15551234567). Restaurant name = 'Kanoon Al Kebab'. chat_sessions for wa_customer_phone=15559990001 (lang='en') and 15559990002 (lang='ar') persist from iteration 5 webhook tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iteration 5 language-stickiness bug is fully fixed and verified. detect_lang() now uses a tri-state contract ('ar' / 'en' / '') and both simulator (/api/whatsapp/message) and webhook (run_bot_for_whatsapp) paths correctly preserve session.lang when the incoming text is language-neutral (add:<uuid>, digits, emoji). 53/53 backend tests green. No further backend work needed for this bug.",
+  "rca_of_issue": "Iteration 5 RCA re-verified: the fix applied to /app/backend/server.py exactly matches the recommendation from iteration_5.json.action_items[0]. detect_lang() (L377-397) now returns '' when the message carries no linguistic signal, and both callers (L627-633, L874-880) gate the session.lang overwrite behind an explicit `detected == 'ar'` OR (`detected == 'en' AND lower in GREET_EN|CHECKOUT_EN|CONFIRM_EN|CANCEL_EN`) check. Reproduction test case (POST 'مرحبا' → then POST 'add:<item_id>' on the same session_id) now correctly returns lang='ar' on the second call, and the full مرحبا → add → طلب → نعم flow ends with the Arabic receipt text 'تم تأكيد طلبك'. English keyword stickiness is symmetrically preserved (an 'add:<id>' after 'Hi' still returns 'Added')."
+}
