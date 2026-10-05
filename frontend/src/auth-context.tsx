@@ -1,62 +1,63 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { apiLogin, apiMe, apiRegister, clearToken, getToken } from "./api";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { storage } from "@/src/utils/storage";
+import { Channel, M3UChannel, XtreamCreds, fetchM3U, m3uToChannel, xtreamAuth } from "./iptv";
 
-type User = { id: string; email: string; name: string; role: string } | null;
+export type Session =
+  | { mode: "xtream"; creds: XtreamCreds; userInfo: any; serverInfo: any }
+  | { mode: "m3u"; url: string; channels: (Channel & { direct_url: string })[]; raw: M3UChannel[] };
 
 type Ctx = {
-  user: User;
+  session: Session | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string, name: string, restaurantName: string) => Promise<void>;
+  loginXtream: (creds: XtreamCreds, remember: boolean) => Promise<void>;
+  loginM3U: (url: string, remember: boolean) => Promise<void>;
   logout: () => Promise<void>;
-  refresh: () => Promise<void>;
 };
+
+const KEY = "streamx_session_v1";
 
 const AuthContext = createContext<Ctx | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const refresh = useCallback(async () => {
+  useEffect(() => { (async () => {
     try {
-      const token = await getToken();
-      if (!token) { setUser(null); return; }
-      const u = await apiMe();
-      setUser(u as any);
-    } catch {
-      setUser(null);
-      await clearToken();
-    }
+      const raw = await storage.secureGet(KEY, null);
+      if (raw) {
+        const parsed = JSON.parse(String(raw));
+        setSession(parsed);
+      }
+    } catch {}
+    setLoading(false);
+  })(); }, []);
+
+  const loginXtream = useCallback(async (creds: XtreamCreds, remember: boolean) => {
+    const info = await xtreamAuth(creds);
+    const next: Session = { mode: "xtream", creds, userInfo: info?.user_info || {}, serverInfo: info?.server_info || {} };
+    setSession(next);
+    if (remember) await storage.secureSet(KEY, JSON.stringify(next));
+    else await storage.secureRemove(KEY);
   }, []);
 
-  useEffect(() => {
-    (async () => {
-      await refresh();
-      setLoading(false);
-    })();
-  }, [refresh]);
-
-  const login = useCallback(async (email: string, password: string) => {
-    const u = await apiLogin(email, password);
-    setUser(u);
-  }, []);
-
-  const signup = useCallback(async (email: string, password: string, name: string, restaurantName: string) => {
-    const u = await apiRegister(email, password, name, restaurantName);
-    setUser(u);
+  const loginM3U = useCallback(async (url: string, remember: boolean) => {
+    const raw = await fetchM3U(url);
+    if (!raw.length) throw new Error("No channels found in playlist");
+    const channels = raw.map((c, i) => m3uToChannel(c, i));
+    const next: Session = { mode: "m3u", url, channels, raw };
+    setSession(next);
+    if (remember) await storage.secureSet(KEY, JSON.stringify(next));
+    else await storage.secureRemove(KEY);
   }, []);
 
   const logout = useCallback(async () => {
-    await clearToken();
-    setUser(null);
+    setSession(null);
+    await storage.secureRemove(KEY);
   }, []);
 
-  return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout, refresh }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  const value = useMemo(() => ({ session, loading, loginXtream, loginM3U, logout }), [session, loading, loginXtream, loginM3U, logout]);
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

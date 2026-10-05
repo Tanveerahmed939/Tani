@@ -1,0 +1,57 @@
+{
+  "summary": "Full E2E verification of the StreamX IPTV pivot. The previous Kanoon Al Kebab/WhatsApp test suite (/app/backend/tests/*) was deleted and replaced with /app/backend/tests/test_streamx_api.py + conftest.py covering the 3 new endpoints (/api/health, /api/proxy/text, /api/proxy/xtream) plus negative tests confirming all legacy restaurant routes (/api/auth/login, /api/menu, /api/orders, /api/settings, /api/whatsapp/*) now 404. Backend pytest: 13/13 PASSED in 1.92s. Frontend Playwright on the mobile viewport (390x844) ran 30 assertions covering: login tabs (Xtream default + M3U), per-tab testIDs, Remember-me toggle, empty-form validation renders inside testID='login-error', 'Use demo' fills the M3U input with iptv-org URL, login-submit navigates to /(tabs)/home where testID='home-greeting' reads 'M3U Playlist', the 5 home shortcuts + search bar render, search opens /search with testID='search-input', favorites shortcut opens /favorites, Live TV renders 27 category chips (chip-all + 26 M3U groups) and 101 channel rows, tapping channel-0 opens /player/live/0 with testID='player-back' and 'player-fav' visible, player-fav → navigate back → /favorites now shows the saved '2GB (1080p)' entry, Settings PIN flow saves successfully (testID='settings-pin-msg' = 'Parental PIN saved'), testID='settings-logout' returns to /login, and legacy routes /profile /signup /whatsapp-settings all render the Expo-router 'Unmatched Route' screen. Minor non-blocking React Native deprecation warnings surfaced in console (see react_native_issues).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "TouchableWithoutFeedback",
+        "issue": "Deprecation warning: 'TouchableWithoutFeedback is deprecated. Please use Pressable.' Emitted on /login. Reference: /app/frontend/app/login.tsx:5,53"
+      },
+      {
+        "component": "props.pointerEvents",
+        "issue": "Deprecation warning: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Emitted on the player screen top-bar / title-wrap View. Reference: /app/frontend/app/player/[kind]/[id].tsx:79,83"
+      },
+      {
+        "component": "Image.style.resizeMode",
+        "issue": "Deprecation warning: 'Image: style.resizeMode is deprecated. Please use props.resizeMode.' Fired when rendering various screens. Likely coming from an Image usage inside shortcut/hero/favorite components — pass resizeMode as a prop rather than in style."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_streamx_api.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Low) Replace TouchableWithoutFeedback in /app/frontend/app/login.tsx with Pressable to silence the deprecation warning.",
+    "(Low) In /app/frontend/app/player/[kind]/[id].tsx move pointerEvents from JSX prop to style ({ pointerEvents: 'box-none' } on the containing View style, same for the title-wrap).",
+    "(Low) Audit Image usages — move resizeMode from style to the resizeMode prop (expo-image uses contentFit; the warning is likely from a react-native <Image> somewhere, grep for `resizeMode:` inside StyleSheet.create blocks)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is lean (96 lines), proper async httpx usage, URL scheme validation, 15s timeouts, follow_redirects=True, VLC UA for upstream IPTV servers — well scoped for the pivot.",
+    "server.py: CORSMiddleware is added AFTER include_router. In FastAPI this still works (middleware wraps the app before serving), but convention is to add middleware first. Not a bug.",
+    "player/[kind]/[id].tsx uses `useEffect` to call favorites.has(kind,id) but the dep array is [kind,id] — OK. The `error` state is set but never updated (no onError handler on VideoView) — if an HLS stream fails on web, the user sees a black screen with no feedback. Consider wiring a playbackStatusUpdate / error callback.",
+    "live.tsx: `useEffect` is imported but only `useCallback` is used for load. useEffect is still used (line 54) — fine."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (rewritten for StreamX)",
+    "/app/backend/tests/test_streamx_api.py (new)",
+    "Deleted: /app/backend/tests/test_auth_register.py, test_backend_api.py, test_bilingual.py, test_whatsapp_integration.py (legacy restaurant suite)",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated — 13/13 PASSED)",
+    "/app/test_reports/iteration_7.json (this report)"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13 pytest passed)",
+    "frontend": "100% (30/30 Playwright assertions passed)"
+  },
+  "seed_data_creation": "No persistent seed data created — tests use the public iptv-org demo M3U URL. The Playwright run exercised AsyncStorage on-device state (favorites + parental PIN) which is per-browser-session and automatically discarded.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The pivot is complete and verified end-to-end on mobile viewport. Backend has only 3 real endpoints: /api/health, /api/proxy/text, /api/proxy/xtream. All legacy restaurant endpoints 404. If you re-test, run `pytest /app/backend/tests/ -v --junitxml=/app/test_reports/pytest/pytest_results.xml` (expects 13/13 PASSED) and the Playwright suite that walks login→home→live→player→favorites→settings PIN→logout. The only outstanding items are 3 low-priority React Native deprecation warnings — they do not break any flow."
+}
